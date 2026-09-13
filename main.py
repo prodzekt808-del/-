@@ -3,11 +3,12 @@ import os
 import threading
 from flask import Flask
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 
-# Твои данные из привязки:
 API_ID = 31801207
 API_HASH = "7aa0290e85951c6dd74ff1c45d722f43"
-BOT_TOKEN = "8832101383:AAE7F7Bu8UXojz420PnW0rXJeDGCZkpq4o0"
+# Вставь сюда длинную строку сессии, которую тебе выдал Colab:
+SESSION_STRING = "ВСЮ_ЭТУ_ДЛИННУЮ_СТРОКУ_СЮДА"
 
 os.makedirs("media_downloads/voices", exist_ok=True)
 os.makedirs("media_downloads/video_notes", exist_ok=True)
@@ -26,7 +27,7 @@ def run_flask():
   app.run(host="0.0.0.0", port=port)
 
 
-# 2. Логика бота Telethon
+# 2. Логика юзербота Telethon через StringSession
 ADMIN_CHAT_ID = None
 client = None
 
@@ -34,15 +35,15 @@ client = None
 async def main_telethon():
   global client
 
-  # Инициализируем клиент Telethon
-  client = TelegramClient("my_account", API_ID, API_HASH)
+  # Запуск через строковую сессию — никаких файлов не нужно!
+  client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
   @client.on(events.NewMessage(pattern="/start"))
   async def cmd_start(event):
     global ADMIN_CHAT_ID
     ADMIN_CHAT_ID = event.chat_id
     await event.respond(
-        "🤖 Бот-радар успешно подключен! Сюда будут падать все входящие"
+        "🤖 Юзербот-радар успешно подключен! Сюда будут падать все входящие"
         " сообщения.\nКоманды:\n/getlogs - скачать файл с логами"
     )
 
@@ -57,7 +58,6 @@ async def main_telethon():
 
   @client.on(events.NewMessage(incoming=True))
   async def handle_incoming(event):
-    # Игнорируем команды
     if event.raw_text.startswith("/"):
       return
 
@@ -116,23 +116,20 @@ async def main_telethon():
       with open("messages.txt", "a", encoding="utf-8") as f:
         f.write(log_text)
 
-      # Отправляем уведомление в чат, если админ нажал /start
       if ADMIN_CHAT_ID:
         try:
           await client.send_message(ADMIN_CHAT_ID, notification_text)
         except Exception as e:
           print(f"Ошибка отправки уведомления: {e}")
 
-  print("🚀 Запуск Telethon по токену...")
-  await client.start(bot_token=BOT_TOKEN)
+  print("🚀 Запуск Telethon по строковой сессии...")
+  await client.start()
   await client.run_until_disconnected()
 
 
 if __name__ == "__main__":
-  # Запускаем Flask в фоне
   flask_thread = threading.Thread(target=run_flask)
   flask_thread.daemon = True
   flask_thread.start()
 
-  # Запускаем Asyncio-цикл для Telethon в главном потоке
   asyncio.run(main_telethon())
