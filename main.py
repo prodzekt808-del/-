@@ -1,18 +1,11 @@
-import asyncio
 import os
 import threading
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
 from flask import Flask
 from telethon import TelegramClient, events
 
 # Твои данные api_id и api_hash (с my.telegram.org)
 API_ID = int(os.environ.get("API_ID", 1234567))
 API_HASH = os.environ.get("API_HASH", "твой_api_hash")
-
-# Токен твоего официального Telegram-бота для уведомлений
-TELEGRAM_BOT_TOKEN = "8832101383:AAE7F7Bu8UXojz420PnW0rXJeDGCZkpq4o0"
-ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
 
 os.makedirs("media_downloads/voices", exist_ok=True)
 os.makedirs("media_downloads/video_notes", exist_ok=True)
@@ -31,54 +24,39 @@ def run_flask():
   app.run(host="0.0.0.0", port=port)
 
 
-# 2. Настройка Bot (aiogram 3.x)
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher()
+# 2. Клиент Telethon (работает и как аккаунт, и может отвечать на команды)
+# Файл сессии 'my_account.session' создастся автоматически
+client = TelegramClient("my_account", API_ID, API_HASH)
+
+ADMIN_CHAT_ID = None
 
 
-async def send_notification(text):
+@client.on(events.NewMessage(pattern="/start"))
+async def cmd_start(event):
   global ADMIN_CHAT_ID
-  if ADMIN_CHAT_ID:
-    try:
-      await bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=text)
-    except Exception as e:
-      print(f"Ошибка отправки уведомления: {e}")
-
-
-@dp.message(Command("start", "help"))
-async def cmd_start(message: types.Message):
-  global ADMIN_CHAT_ID
-  ADMIN_CHAT_ID = str(message.chat.id)
-  await message.answer(
-      "🤖 Бот-радар подключен! Сюда будут падать все входящие сообщения."
-      " Команды:\n/getlogs - скачать файл с логами"
+  ADMIN_CHAT_ID = event.chat_id
+  await event.respond(
+      "🤖 Бот-радар успешно подключен! Сюда будут падать все входящие"
+      " сообщения.\nКоманды:\n/getlogs - скачать файл с логами"
   )
 
 
-@dp.message(Command("getlogs"))
-async def cmd_getlogs(message: types.Message):
+@client.on(events.NewMessage(pattern="/getlogs"))
+async def cmd_getlogs(event):
   if os.path.exists("messages.txt"):
-    document = types.FSInputFile("messages.txt")
-    await message.answer_document(
-        document, caption="📂 Твой актуальный файл логов"
+    await event.respond(
+        file="messages.txt", message="📂 Твой актуальный файл логов"
     )
   else:
-    await message.answer("❌ Файл логов пока пуст.")
-
-
-def run_aiogram_bot():
-  loop = asyncio.new_event_loop()
-  asyncio.set_event_loop(loop)
-  loop.run_until_complete(dp.start_polling(bot))
-
-
-# 3. Юзербот Telethon с файловой сессией (спросит один раз и запомнит)
-# Имя файла сессии 'my_account.session' сохранится на сервере, больше код просить не будет
-client = TelegramClient("my_account", API_ID, API_HASH)
+    await event.respond("❌ Файл логов пока пуст.")
 
 
 @client.on(events.NewMessage(incoming=True))
 async def handle_incoming(event):
+  # Игнорируем команды
+  if event.raw_text.startswith("/"):
+    return
+
   sender = await event.get_sender()
   sender_name = (
       getattr(sender, "first_name", "") + " " + getattr(sender, "last_name", "")
@@ -130,19 +108,12 @@ async def handle_incoming(event):
     with open("messages.txt", "a", encoding="utf-8") as f:
       f.write(log_text)
 
+    # Отправляем уведомление в чат, если админ нажал /start
     if ADMIN_CHAT_ID:
-      loop = asyncio.get_event_loop()
-      asyncio.run_coroutine_threadsafe(
-          send_notification(notification_text), loop
-      )
-
-
-def run_telegram_userbot():
-  print("🚀 Юзербот запущен...")
-  # При первом запуске попросит ввести номер и код в консоли Render (в логах деплоя),
-  # после чего создаст файл сессии и больше никогда не будет переспрашивать.
-  client.start()
-  client.run_until_disconnected()
+      try:
+        await client.send_message(ADMIN_CHAT_ID, notification_text)
+      except Exception as e:
+        print(f"Ошибка отправки уведомления: {e}")
 
 
 if __name__ == "__main__":
@@ -151,10 +122,6 @@ if __name__ == "__main__":
   flask_thread.daemon = True
   flask_thread.start()
 
-  # Запускаем бота в фоне
-  bot_thread = threading.Thread(target=run_aiogram_bot)
-  bot_thread.daemon = True
-  bot_thread.start()
-
-  # Запускаем юзербота
-  run_telegram_userbot()
+  print("🚀 Запуск Telethon...")
+  client.start()
+  client.run_until_disconnected()
